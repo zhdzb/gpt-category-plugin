@@ -205,6 +205,7 @@
   function scanConversations() {
     const data = loadData();
     const links = getConversationLinks();
+    const scannedIds = new Set();
 
     let changed = false;
     const now = Date.now();
@@ -214,6 +215,7 @@
       const id = getConversationIdFromHref(href);
 
       if (!id) return;
+      scannedIds.add(id);
 
       const title = extractTitleFromLink(link);
       const normalizedHref = normalizeHref(href);
@@ -263,6 +265,17 @@
 
       item.lastSeenAt = now;
     });
+
+    // Only prune when the sidebar has yielded conversations, which helps avoid
+    // clearing local data during early page load states.
+    if (scannedIds.size > 0) {
+      Object.keys(data.conversations).forEach(id => {
+        if (scannedIds.has(id)) return;
+
+        delete data.conversations[id];
+        changed = true;
+      });
+    }
 
     if (changed) {
       saveData(data);
