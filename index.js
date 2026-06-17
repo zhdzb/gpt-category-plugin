@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT 自定义会话分类 - Fixed 按钮版
 // @namespace    chatgpt-custom-category
-// @version      0.5.0
-// @description  为 ChatGPT 增加本地会话分类、折叠、备注、颜色、导入导出功能。使用 fixed 按钮打开管理弹窗，不再侵入左侧栏布局。
+// @version      0.6.0
+// @description  为 ChatGPT 增加本地会话分类、折叠、备注、颜色、导入导出，并通过固定按钮打开管理面板。
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_getValue
@@ -15,9 +15,9 @@
   'use strict';
 
   const STORAGE_KEY = 'chatgpt_custom_category_data_v1';
-
   const LAUNCHER_ID = 'cgpt-category-launcher';
   const MODAL_ID = 'cgpt-category-modal';
+  const TOAST_ID = 'cgpt-category-toast';
 
   const ALL_CATEGORY_NAME = '全部';
   const DEFAULT_CATEGORY_NAME = '未分类';
@@ -47,6 +47,8 @@
     '#8e8e93',
   ];
 
+  let toastTimer = null;
+
   function loadData() {
     const raw = GM_getValue(STORAGE_KEY, DEFAULT_DATA);
     return normalizeData(raw);
@@ -58,7 +60,6 @@
 
   function normalizeData(input) {
     const data = input && typeof input === 'object' ? input : {};
-
     const categories = {
       ...DEFAULT_DATA.categories,
       ...(data.categories && typeof data.categories === 'object' ? data.categories : {}),
@@ -68,10 +69,7 @@
       const meta = categories[name];
 
       if (!meta || typeof meta !== 'object') {
-        categories[name] = {
-          color: randomColor(),
-          collapsed: false,
-        };
+        categories[name] = { color: randomColor(), collapsed: false };
         return;
       }
 
@@ -82,10 +80,7 @@
     });
 
     if (!categories[DEFAULT_CATEGORY_NAME]) {
-      categories[DEFAULT_CATEGORY_NAME] = {
-        color: '#8e8e93',
-        collapsed: false,
-      };
+      categories[DEFAULT_CATEGORY_NAME] = { color: '#8e8e93', collapsed: false };
     }
 
     const conversations = {};
@@ -97,10 +92,7 @@
         const category = item.category || DEFAULT_CATEGORY_NAME;
 
         if (!categories[category]) {
-          categories[category] = {
-            color: randomColor(),
-            collapsed: false,
-          };
+          categories[category] = { color: randomColor(), collapsed: false };
         }
 
         conversations[id] = {
@@ -137,7 +129,6 @@
 
   function getConversationIdFromHref(href) {
     if (!href) return null;
-
     const match = href.match(/\/c\/([^/?#]+)/);
     return match ? match[1] : null;
   }
@@ -157,8 +148,10 @@
     return Boolean(
       element.id === LAUNCHER_ID ||
         element.id === MODAL_ID ||
+        element.id === TOAST_ID ||
         element.closest?.(`#${LAUNCHER_ID}`) ||
-        element.closest?.(`#${MODAL_ID}`)
+        element.closest?.(`#${MODAL_ID}`) ||
+        element.closest?.(`#${TOAST_ID}`)
     );
   }
 
@@ -181,9 +174,7 @@
       const href = link.getAttribute('href');
       const id = getConversationIdFromHref(href);
 
-      if (!id) return;
-      if (map.has(id)) return;
-
+      if (!id || map.has(id)) return;
       map.set(id, link);
     });
 
@@ -192,13 +183,8 @@
 
   function extractTitleFromLink(link) {
     const cloned = link.cloneNode(true);
-
-    cloned.querySelectorAll('[data-cgpt-custom]').forEach(el => {
-      el.remove();
-    });
-
+    cloned.querySelectorAll('[data-cgpt-custom]').forEach(el => el.remove());
     const text = cloned.textContent?.replace(/\s+/g, ' ').trim();
-
     return text || '未命名会话';
   }
 
@@ -206,17 +192,16 @@
     const data = loadData();
     const links = getConversationLinks();
     const scannedIds = new Set();
-
-    let changed = false;
     const now = Date.now();
+    let changed = false;
 
     links.forEach(link => {
       const href = link.getAttribute('href');
       const id = getConversationIdFromHref(href);
 
       if (!id) return;
-      scannedIds.add(id);
 
+      scannedIds.add(id);
       const title = extractTitleFromLink(link);
       const normalizedHref = normalizeHref(href);
 
@@ -231,7 +216,6 @@
           updatedAt: now,
           lastSeenAt: now,
         };
-
         changed = true;
         return;
       }
@@ -244,10 +228,7 @@
       }
 
       if (!data.categories[item.category]) {
-        data.categories[item.category] = {
-          color: randomColor(),
-          collapsed: false,
-        };
+        data.categories[item.category] = { color: randomColor(), collapsed: false };
         changed = true;
       }
 
@@ -266,12 +247,9 @@
       item.lastSeenAt = now;
     });
 
-    // Only prune when the sidebar has yielded conversations, which helps avoid
-    // clearing local data during early page load states.
     if (scannedIds.size > 0) {
       Object.keys(data.conversations).forEach(id => {
         if (scannedIds.has(id)) return;
-
         delete data.conversations[id];
         changed = true;
       });
@@ -282,22 +260,18 @@
     }
 
     updateLauncherCount(data);
-
     return data;
   }
 
   function getConversationColor(data, id) {
     const item = data.conversations[id];
-
     if (!item) return '#8e8e93';
     if (item.color) return item.color;
-
     return data.categories[item.category]?.color || '#8e8e93';
   }
 
   function ensureLauncher() {
     let launcher = document.getElementById(LAUNCHER_ID);
-
     if (launcher) return launcher;
 
     launcher = document.createElement('button');
@@ -305,7 +279,7 @@
     launcher.dataset.cgptCustom = '1';
     launcher.type = 'button';
     launcher.innerHTML = `
-      <span class="cgpt-launcher-icon">☰</span>
+      <span class="cgpt-launcher-icon">#</span>
       <span class="cgpt-launcher-text">分类</span>
       <span class="cgpt-launcher-count">0</span>
     `;
@@ -315,7 +289,6 @@
     });
 
     document.body.appendChild(launcher);
-
     return launcher;
   }
 
@@ -330,10 +303,9 @@
   }
 
   function openManagerModal(options = {}) {
-    const { scan = true } = options;
+    const { scan = true, expandedId = null } = options;
     const data = scan ? scanConversations() : loadData();
-
-    const modal = openModal(buildManagerModalHtml(data));
+    const modal = openModal(buildManagerModalHtml(data, expandedId));
 
     modal.addEventListener('click', event => {
       const target = event.target.closest('[data-manager-action]');
@@ -348,7 +320,7 @@
 
       if (action === 'refresh') {
         closeModal();
-        openManagerModal({ scan: true });
+        openManagerModal({ scan: true, expandedId });
         return;
       }
 
@@ -356,23 +328,22 @@
         const latest = loadData();
         latest.ui.activeCategory = target.dataset.category || ALL_CATEGORY_NAME;
         saveData(latest);
-
         closeModal();
-        openManagerModal({ scan: false });
+        openManagerModal({ scan: false, expandedId });
         return;
       }
 
       if (action === 'toggle-category') {
         toggleCategory(target.dataset.category);
         closeModal();
-        openManagerModal({ scan: false });
+        openManagerModal({ scan: false, expandedId });
         return;
       }
 
       if (action === 'new-category') {
         closeModal();
         createCategory();
-        openManagerModal({ scan: false });
+        openManagerModal({ scan: false, expandedId });
         return;
       }
 
@@ -381,9 +352,22 @@
         return;
       }
 
-      if (action === 'edit-conversation') {
+      if (action === 'toggle-inline-editor') {
+        const nextExpandedId =
+          expandedId === target.dataset.id ? null : target.dataset.id || null;
         closeModal();
-        openConversationEditor(target.dataset.id);
+        openManagerModal({ scan: false, expandedId: nextExpandedId });
+        return;
+      }
+
+      if (action === 'save-inline-conversation') {
+        saveConversationFromManager(modal, target.dataset.id, expandedId);
+        return;
+      }
+
+      if (action === 'cancel-inline-editor') {
+        closeModal();
+        openManagerModal({ scan: false });
         return;
       }
 
@@ -394,24 +378,56 @@
 
       if (action === 'import-json') {
         importJson();
+      }
+    });
+
+    modal.addEventListener('change', event => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      if (target.matches('[data-manager-field="quick-category"]')) {
+        updateConversationCategory(target.dataset.id, target.value);
+        closeModal();
+        openManagerModal({ scan: false, expandedId });
         return;
+      }
+
+      if (
+        target.matches('[data-manager-field="inline-category"]') ||
+        target.matches('[data-manager-field="inline-use-category-color"]')
+      ) {
+        syncInlineEditorColor(modal, target.dataset.id);
+      }
+    });
+
+    modal.addEventListener('input', event => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      if (target.matches('[data-manager-field="inline-color"]')) {
+        const id = target.dataset.id || '';
+        const checkbox = modal.querySelector(
+          `[data-manager-field="inline-use-category-color"][data-id="${escapeHtmlAttribute(id)}"]`
+        );
+
+        if (checkbox instanceof HTMLInputElement) {
+          checkbox.checked = false;
+        }
       }
     });
   }
 
-  function buildManagerModalHtml(data) {
+  function buildManagerModalHtml(data, expandedId = null) {
     const activeCategory = data.ui.activeCategory || ALL_CATEGORY_NAME;
     const categoryNames = [ALL_CATEGORY_NAME, ...Object.keys(data.categories)];
 
     const categoryListHtml = categoryNames
       .map(name => {
         const activeClass = name === activeCategory ? 'cgpt-manager-cat-active' : '';
-
         const count =
           name === ALL_CATEGORY_NAME
             ? Object.keys(data.conversations).length
             : Object.values(data.conversations).filter(item => item.category === name).length;
-
         const color =
           name === ALL_CATEGORY_NAME
             ? '#8e8e93'
@@ -439,7 +455,7 @@
           <div>
             <strong>ChatGPT 自定义分类</strong>
             <div class="cgpt-modal-subtitle">
-              本地管理会话分类、备注、颜色与 JSON 备份
+              在一个面板里完成分类、备注、颜色和 JSON 备份管理
             </div>
           </div>
 
@@ -462,7 +478,7 @@
             </div>
 
             <div class="cgpt-manager-list">
-              ${buildGroupedConversationHtml(data)}
+              ${buildGroupedConversationHtml(data, expandedId)}
             </div>
           </div>
         </div>
@@ -470,9 +486,8 @@
     `;
   }
 
-  function buildGroupedConversationHtml(data) {
+  function buildGroupedConversationHtml(data, expandedId = null) {
     const activeCategory = data.ui.activeCategory || ALL_CATEGORY_NAME;
-
     const entries = Object.entries(data.conversations)
       .filter(([, item]) => {
         if (activeCategory === ALL_CATEGORY_NAME) return true;
@@ -485,18 +500,14 @@
       });
 
     if (entries.length === 0) {
-      return `<div class="cgpt-empty">当前分类暂无会话。可以先点击“刷新会话”，或在左侧栏加载更多历史会话后再试。</div>`;
+      return `<div class="cgpt-empty">当前分类暂无会话。你可以先点击“刷新会话”，或让 ChatGPT 侧边栏加载出更多历史记录后再试。</div>`;
     }
 
     const groups = {};
 
     entries.forEach(([id, item]) => {
       const category = item.category || DEFAULT_CATEGORY_NAME;
-
-      if (!groups[category]) {
-        groups[category] = [];
-      }
-
+      if (!groups[category]) groups[category] = [];
       groups[category].push([id, item]);
     });
 
@@ -507,53 +518,13 @@
 
     return orderedCategoryNames
       .map(category => {
-        const meta = data.categories[category] || {
-          color: '#8e8e93',
-          collapsed: false,
-        };
-
+        const meta = data.categories[category] || { color: '#8e8e93', collapsed: false };
         const items = groups[category] || [];
         const collapsed = Boolean(meta.collapsed);
-
         const itemHtml = collapsed
           ? ''
           : items
-              .map(([id, item]) => {
-                const color = getConversationColor(data, id);
-                const note = item.note
-                  ? `<div class="cgpt-manager-note">${escapeHtml(item.note)}</div>`
-                  : '';
-
-                return `
-                  <div class="cgpt-manager-item">
-                    <div class="cgpt-manager-item-main">
-                      <a class="cgpt-manager-title" href="${escapeHtml(item.href)}">
-                        <span class="cgpt-dot" style="background:${escapeHtml(color)}"></span>
-                        <span>${escapeHtml(item.title)}</span>
-                      </a>
-
-                      <button
-                        class="cgpt-btn cgpt-small-btn"
-                        data-manager-action="edit-conversation"
-                        data-id="${escapeHtml(id)}"
-                      >
-                        编辑
-                      </button>
-                    </div>
-
-                    <div class="cgpt-manager-meta">
-                      <span>分类：${escapeHtml(item.category || DEFAULT_CATEGORY_NAME)}</span>
-                      ${
-                        item.color
-                          ? '<span>使用会话颜色</span>'
-                          : '<span>使用分类颜色</span>'
-                      }
-                    </div>
-
-                    ${note}
-                  </div>
-                `;
-              })
+              .map(([id, item]) => buildConversationItemHtml(data, id, item, expandedId))
               .join('');
 
         return `
@@ -569,7 +540,7 @@
                 <span class="cgpt-count">${items.length}</span>
               </span>
 
-              <span class="cgpt-category-arrow">${collapsed ? '▶' : '▼'}</span>
+              <span class="cgpt-category-arrow">${collapsed ? '▸' : '▾'}</span>
             </div>
 
             <div class="cgpt-category-items">
@@ -581,28 +552,240 @@
       .join('');
   }
 
+  function buildConversationItemHtml(data, id, item, expandedId) {
+    const color = getConversationColor(data, id);
+    const isExpanded = expandedId === id;
+    const note = item.note
+      ? `<div class="cgpt-manager-note">${escapeHtml(item.note)}</div>`
+      : '';
+
+    return `
+      <div class="cgpt-manager-item">
+        <div class="cgpt-manager-item-main">
+          <a class="cgpt-manager-title" href="${escapeHtml(item.href)}">
+            <span class="cgpt-dot" style="background:${escapeHtml(color)}"></span>
+            <span>${escapeHtml(item.title)}</span>
+          </a>
+
+          <div class="cgpt-manager-actions">
+            <select
+              class="cgpt-inline-select"
+              data-manager-field="quick-category"
+              data-id="${escapeHtml(id)}"
+              aria-label="quick-category"
+            >
+              ${buildCategoryOptions(data, item.category)}
+            </select>
+
+            <button
+              class="cgpt-btn cgpt-small-btn"
+              data-manager-action="toggle-inline-editor"
+              data-id="${escapeHtml(id)}"
+            >
+              ${isExpanded ? '收起' : '展开'}
+            </button>
+          </div>
+        </div>
+
+        <div class="cgpt-manager-meta">
+          <span>分类：${escapeHtml(item.category || DEFAULT_CATEGORY_NAME)}</span>
+          ${item.color ? '<span>使用会话颜色</span>' : '<span>使用分类颜色</span>'}
+        </div>
+
+        ${note}
+        ${isExpanded ? buildInlineConversationEditorHtml(data, id, item, color) : ''}
+      </div>
+    `;
+  }
+
+  function buildCategoryOptions(data, selectedCategory) {
+    return Object.keys(data.categories)
+      .map(name => {
+        const selected = name === selectedCategory ? 'selected' : '';
+        return `<option value="${escapeHtml(name)}" ${selected}>${escapeHtml(name)}</option>`;
+      })
+      .join('');
+  }
+
+  function buildInlineConversationEditorHtml(data, id, item, color) {
+    const useCategoryColorChecked = item.color ? '' : 'checked';
+
+    return `
+      <div class="cgpt-inline-editor">
+        <div class="cgpt-inline-editor-grid">
+          <label>
+            <span>标题</span>
+            <input
+              data-manager-field="inline-title"
+              data-id="${escapeHtml(id)}"
+              value="${escapeHtml(item.title)}"
+            />
+          </label>
+
+          <label>
+            <span>分类</span>
+            <select data-manager-field="inline-category" data-id="${escapeHtml(id)}">
+              ${buildCategoryOptions(data, item.category)}
+            </select>
+          </label>
+
+          <label>
+            <span>新分类</span>
+            <input
+              data-manager-field="inline-new-category"
+              data-id="${escapeHtml(id)}"
+              placeholder="可选：输入后自动创建"
+            />
+          </label>
+
+          <label>
+            <span>颜色标记</span>
+            <input
+              data-manager-field="inline-color"
+              data-id="${escapeHtml(id)}"
+              type="color"
+              value="${escapeHtml(color)}"
+            />
+          </label>
+        </div>
+
+        <label class="cgpt-checkbox-row">
+          <input
+            data-manager-field="inline-use-category-color"
+            data-id="${escapeHtml(id)}"
+            type="checkbox"
+            ${useCategoryColorChecked}
+          />
+          <span>使用分类默认颜色</span>
+        </label>
+
+        <label>
+          <span>备注</span>
+          <textarea data-manager-field="inline-note" data-id="${escapeHtml(id)}" rows="4">${escapeHtml(item.note || '')}</textarea>
+        </label>
+
+        <div class="cgpt-inline-actions">
+          <button class="cgpt-btn" data-manager-action="cancel-inline-editor" data-id="${escapeHtml(id)}">取消</button>
+          <button class="cgpt-btn cgpt-primary" data-manager-action="save-inline-conversation" data-id="${escapeHtml(id)}">保存</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function getManagerFieldValue(modal, field, id) {
+    const element = modal.querySelector(
+      `[data-manager-field="${field}"][data-id="${escapeHtmlAttribute(id)}"]`
+    );
+
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement
+    ) {
+      return element.value;
+    }
+
+    return '';
+  }
+
+  function getManagerCheckboxValue(modal, field, id) {
+    const element = modal.querySelector(
+      `[data-manager-field="${field}"][data-id="${escapeHtmlAttribute(id)}"]`
+    );
+
+    return element instanceof HTMLInputElement ? element.checked : false;
+  }
+
+  function syncInlineEditorColor(modal, id) {
+    const useCategoryColor = getManagerCheckboxValue(modal, 'inline-use-category-color', id);
+    if (!useCategoryColor) return;
+
+    const category = getManagerFieldValue(modal, 'inline-category', id);
+    const latest = loadData();
+    const categoryColor = latest.categories[category]?.color || '#8e8e93';
+    const colorInput = modal.querySelector(
+      `[data-manager-field="inline-color"][data-id="${escapeHtmlAttribute(id)}"]`
+    );
+
+    if (colorInput instanceof HTMLInputElement) {
+      colorInput.value = categoryColor;
+    }
+  }
+
+  function saveConversationFromManager(modal, id, expandedId) {
+    const latest = loadData();
+    const item = latest.conversations[id];
+
+    if (!item) {
+      closeModal();
+      return;
+    }
+
+    const title = getManagerFieldValue(modal, 'inline-title', id).trim();
+    const selectedCategory = getManagerFieldValue(modal, 'inline-category', id);
+    const newCategory = getManagerFieldValue(modal, 'inline-new-category', id).trim();
+    const color = getManagerFieldValue(modal, 'inline-color', id);
+    const useCategoryColor = getManagerCheckboxValue(modal, 'inline-use-category-color', id);
+    const note = getManagerFieldValue(modal, 'inline-note', id).trim();
+    const finalCategory = newCategory || selectedCategory || DEFAULT_CATEGORY_NAME;
+
+    if (!latest.categories[finalCategory]) {
+      latest.categories[finalCategory] = { color: randomColor(), collapsed: false };
+    }
+
+    item.title = title || item.title;
+    item.category = finalCategory;
+    item.note = note;
+    item.color = useCategoryColor ? '' : color;
+    item.updatedAt = Date.now();
+    latest.ui.activeCategory = finalCategory;
+
+    saveData(latest);
+    updateLauncherCount(latest);
+    showToast('会话已保存');
+
+    closeModal();
+    openManagerModal({ scan: false, expandedId: expandedId === id ? id : null });
+  }
+
+  function updateConversationCategory(id, nextCategory) {
+    if (!id || !nextCategory) return;
+
+    const data = loadData();
+    const item = data.conversations[id];
+
+    if (!item) return;
+
+    if (!data.categories[nextCategory]) {
+      data.categories[nextCategory] = { color: randomColor(), collapsed: false };
+    }
+
+    item.category = nextCategory;
+    item.updatedAt = Date.now();
+    data.ui.activeCategory = nextCategory;
+
+    saveData(data);
+    updateLauncherCount(data);
+    showToast('分类已更新');
+  }
+
   function createCategory() {
     const name = prompt('请输入新分类名称：');
-
     if (!name) return;
 
     const category = name.trim();
-
     if (!category) return;
 
     const data = loadData();
 
     if (!data.categories[category]) {
-      data.categories[category] = {
-        color: randomColor(),
-        collapsed: false,
-      };
+      data.categories[category] = { color: randomColor(), collapsed: false };
     }
 
     data.ui.activeCategory = category;
-
     saveData(data);
     updateLauncherCount(data);
+    showToast('分类已创建');
   }
 
   function toggleCategory(category) {
@@ -611,186 +794,11 @@
     const data = loadData();
 
     if (!data.categories[category]) {
-      data.categories[category] = {
-        color: randomColor(),
-        collapsed: false,
-      };
+      data.categories[category] = { color: randomColor(), collapsed: false };
     }
 
     data.categories[category].collapsed = !data.categories[category].collapsed;
-
     saveData(data);
-  }
-
-  function openConversationEditor(id) {
-    const data = loadData();
-    const item = data.conversations[id];
-
-    if (!item) return;
-
-    const categoryOptions = Object.keys(data.categories)
-      .map(name => {
-        const selected = name === item.category ? 'selected' : '';
-
-        return `
-          <option value="${escapeHtml(name)}" ${selected}>
-            ${escapeHtml(name)}
-          </option>
-        `;
-      })
-      .join('');
-
-    const currentColor = item.color || getConversationColor(data, id);
-    const useCategoryColorChecked = item.color ? '' : 'checked';
-
-    const modal = openModal(`
-      <div class="cgpt-modal-card">
-        <div class="cgpt-modal-header">
-          <div>
-            <strong>编辑会话</strong>
-            <div class="cgpt-modal-subtitle">${escapeHtml(item.title)}</div>
-          </div>
-
-          <button class="cgpt-modal-close" data-modal-action="close">×</button>
-        </div>
-
-        <div class="cgpt-form">
-          <label>
-            <span>标题</span>
-            <input id="cgpt-edit-title" value="${escapeHtml(item.title)}" />
-          </label>
-
-          <label>
-            <span>分类</span>
-            <select id="cgpt-edit-category">
-              ${categoryOptions}
-            </select>
-          </label>
-
-          <label>
-            <span>新分类</span>
-            <input id="cgpt-edit-new-category" placeholder="可选：输入后会创建并使用该分类" />
-          </label>
-
-          <label>
-            <span>颜色标记</span>
-            <input id="cgpt-edit-color" type="color" value="${escapeHtml(currentColor)}" />
-          </label>
-
-          <label class="cgpt-checkbox-row">
-            <input id="cgpt-edit-use-category-color" type="checkbox" ${useCategoryColorChecked} />
-            <span>使用分类默认颜色</span>
-          </label>
-
-          <label>
-            <span>备注</span>
-            <textarea id="cgpt-edit-note" rows="5">${escapeHtml(item.note || '')}</textarea>
-          </label>
-
-          <div class="cgpt-modal-actions">
-            <button class="cgpt-btn" data-modal-action="back-manager">返回管理</button>
-            <button class="cgpt-btn" data-modal-action="close">关闭</button>
-            <button class="cgpt-btn cgpt-primary" data-modal-action="save-conversation">保存</button>
-          </div>
-        </div>
-      </div>
-    `);
-
-    const colorInput = modal.querySelector('#cgpt-edit-color');
-    const useCategoryColorInput = modal.querySelector('#cgpt-edit-use-category-color');
-    const categorySelect = modal.querySelector('#cgpt-edit-category');
-
-    if (colorInput && useCategoryColorInput) {
-      colorInput.addEventListener('input', () => {
-        useCategoryColorInput.checked = false;
-      });
-
-      colorInput.addEventListener('change', () => {
-        useCategoryColorInput.checked = false;
-      });
-    }
-
-    if (categorySelect && colorInput && useCategoryColorInput) {
-      categorySelect.addEventListener('change', () => {
-        if (!useCategoryColorInput.checked) return;
-
-        const latest = loadData();
-        const category = categorySelect.value;
-        const categoryColor = latest.categories[category]?.color || '#8e8e93';
-
-        colorInput.value = categoryColor;
-      });
-    }
-
-    if (useCategoryColorInput && colorInput) {
-      useCategoryColorInput.addEventListener('change', () => {
-        if (!useCategoryColorInput.checked) return;
-
-        const latest = loadData();
-        const category = categorySelect?.value || item.category || DEFAULT_CATEGORY_NAME;
-        const categoryColor = latest.categories[category]?.color || '#8e8e93';
-
-        colorInput.value = categoryColor;
-      });
-    }
-
-    modal.addEventListener('click', event => {
-      const target = event.target.closest('[data-modal-action]');
-      if (!target) return;
-
-      const action = target.dataset.modalAction;
-
-      if (action === 'close') {
-        closeModal();
-        return;
-      }
-
-      if (action === 'back-manager') {
-        closeModal();
-        openManagerModal({ scan: false });
-        return;
-      }
-
-      if (action === 'save-conversation') {
-        const latest = loadData();
-        const latestItem = latest.conversations[id];
-
-        if (!latestItem) {
-          closeModal();
-          return;
-        }
-
-        const title = document.getElementById('cgpt-edit-title').value.trim();
-        const selectedCategory = document.getElementById('cgpt-edit-category').value;
-        const newCategory = document.getElementById('cgpt-edit-new-category').value.trim();
-        const color = document.getElementById('cgpt-edit-color').value;
-        const useCategoryColor = document.getElementById('cgpt-edit-use-category-color').checked;
-        const note = document.getElementById('cgpt-edit-note').value.trim();
-
-        const finalCategory = newCategory || selectedCategory || DEFAULT_CATEGORY_NAME;
-
-        if (!latest.categories[finalCategory]) {
-          latest.categories[finalCategory] = {
-            color: randomColor(),
-            collapsed: false,
-          };
-        }
-
-        latestItem.title = title || latestItem.title;
-        latestItem.category = finalCategory;
-        latestItem.note = note;
-        latestItem.color = useCategoryColor ? '' : color;
-        latestItem.updatedAt = Date.now();
-
-        latest.ui.activeCategory = finalCategory;
-
-        saveData(latest);
-        updateLauncherCount(latest);
-
-        closeModal();
-        openManagerModal({ scan: false });
-      }
-    });
   }
 
   function editCurrentCategoryColor() {
@@ -810,7 +818,6 @@
     closeModal();
 
     const currentColor = data.categories[category].color || '#8e8e93';
-
     const modal = openModal(`
       <div class="cgpt-modal-card">
         <div class="cgpt-modal-header">
@@ -854,14 +861,13 @@
     const colorInput = modal.querySelector('#cgpt-category-color-input');
     const preview = modal.querySelector('#cgpt-category-color-preview');
 
-    if (colorInput && preview) {
-      colorInput.addEventListener('input', () => {
+    if (colorInput instanceof HTMLInputElement && preview instanceof HTMLElement) {
+      const syncPreview = () => {
         preview.style.background = colorInput.value;
-      });
+      };
 
-      colorInput.addEventListener('change', () => {
-        preview.style.background = colorInput.value;
-      });
+      colorInput.addEventListener('input', syncPreview);
+      colorInput.addEventListener('change', syncPreview);
     }
 
     modal.addEventListener('click', event => {
@@ -885,16 +891,15 @@
         const latest = loadData();
 
         if (!latest.categories[category]) {
-          latest.categories[category] = {
-            color: '#8e8e93',
-            collapsed: false,
-          };
+          latest.categories[category] = { color: '#8e8e93', collapsed: false };
         }
 
-        latest.categories[category].color = colorInput?.value || currentColor;
+        latest.categories[category].color =
+          colorInput instanceof HTMLInputElement ? colorInput.value : currentColor;
 
         saveData(latest);
         updateLauncherCount(latest);
+        showToast('分类颜色已保存');
 
         closeModal();
         openManagerModal({ scan: false });
@@ -905,11 +910,7 @@
   function exportJson() {
     const data = loadData();
     const content = JSON.stringify(data, null, 2);
-
-    const blob = new Blob([content], {
-      type: 'application/json;charset=utf-8',
-    });
-
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
 
@@ -918,17 +919,16 @@
     a.click();
 
     URL.revokeObjectURL(url);
+    showToast('已导出 JSON');
   }
 
   function importJson() {
     const input = document.createElement('input');
-
     input.type = 'file';
     input.accept = 'application/json';
 
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
-
       if (!file) return;
 
       try {
@@ -940,12 +940,13 @@
           return;
         }
 
-        const confirmed = confirm('导入后会与当前数据合并。同 ID 会话会被导入数据覆盖，是否继续？');
+        const confirmed = confirm(
+          '导入后会与当前数据合并。同 ID 会话会被导入数据覆盖，是否继续？'
+        );
 
         if (!confirmed) return;
 
         const current = loadData();
-
         const next = normalizeData({
           version: 1,
           categories: {
@@ -964,11 +965,9 @@
 
         saveData(next);
         updateLauncherCount(next);
-
         closeModal();
         openManagerModal({ scan: false });
-
-        alert('导入完成。');
+        showToast('导入完成');
       } catch (error) {
         console.error(error);
         alert('导入失败，请检查 JSON 文件。');
@@ -982,10 +981,8 @@
     closeModal();
 
     const modal = document.createElement('div');
-
     modal.id = MODAL_ID;
     modal.dataset.cgptCustom = '1';
-
     modal.innerHTML = `
       <div class="cgpt-modal-mask"></div>
       <div class="cgpt-modal-body">
@@ -994,18 +991,37 @@
     `;
 
     document.body.appendChild(modal);
-
-    modal.querySelector('.cgpt-modal-mask').addEventListener('click', closeModal);
-
+    modal.querySelector('.cgpt-modal-mask')?.addEventListener('click', closeModal);
     return modal;
   }
 
   function closeModal() {
     const old = document.getElementById(MODAL_ID);
+    if (old) old.remove();
+  }
 
-    if (old) {
-      old.remove();
+  function showToast(message) {
+    if (!message) return;
+
+    let toast = document.getElementById(TOAST_ID);
+
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = TOAST_ID;
+      toast.dataset.cgptCustom = '1';
+      document.body.appendChild(toast);
     }
+
+    toast.textContent = message;
+    toast.classList.add('cgpt-toast-visible');
+
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+    }
+
+    toastTimer = setTimeout(() => {
+      toast?.classList.remove('cgpt-toast-visible');
+    }, 1800);
   }
 
   function formatDateForFileName(date) {
@@ -1014,7 +1030,6 @@
     const d = String(date.getDate()).padStart(2, '0');
     const h = String(date.getHours()).padStart(2, '0');
     const min = String(date.getMinutes()).padStart(2, '0');
-
     return `${y}${m}${d}-${h}${min}`;
   }
 
@@ -1025,6 +1040,10 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#039;');
+  }
+
+  function escapeHtmlAttribute(value) {
+    return String(value ?? '').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
   }
 
   function injectStyle() {
@@ -1319,6 +1338,13 @@
         min-width: 0;
       }
 
+      .cgpt-manager-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
       .cgpt-manager-title {
         display: flex;
         align-items: center;
@@ -1360,6 +1386,25 @@
         word-break: break-word;
       }
 
+      .cgpt-inline-editor {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed rgba(128, 128, 128, 0.25);
+      }
+
+      .cgpt-inline-editor-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .cgpt-inline-actions {
+        margin-top: 10px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
       .cgpt-form {
         padding: 16px;
         display: flex;
@@ -1367,7 +1412,8 @@
         gap: 12px;
       }
 
-      .cgpt-form label {
+      .cgpt-form label,
+      .cgpt-inline-editor label {
         display: flex;
         flex-direction: column;
         gap: 6px;
@@ -1376,7 +1422,11 @@
 
       .cgpt-form input,
       .cgpt-form select,
-      .cgpt-form textarea {
+      .cgpt-form textarea,
+      .cgpt-inline-editor input,
+      .cgpt-inline-editor select,
+      .cgpt-inline-editor textarea,
+      .cgpt-inline-select {
         border: 1px solid rgba(128, 128, 128, 0.35);
         border-radius: 8px;
         padding: 8px;
@@ -1387,7 +1437,9 @@
         color-scheme: light dark;
       }
 
-      .cgpt-form select option {
+      .cgpt-form select option,
+      .cgpt-inline-editor select option,
+      .cgpt-inline-select option {
         background: Canvas;
         color: CanvasText;
       }
@@ -1452,6 +1504,31 @@
         border-color: rgba(79, 140, 255, 0.45);
       }
 
+      #${TOAST_ID} {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        z-index: 1000000;
+        max-width: min(320px, calc(100vw - 32px));
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(128, 128, 128, 0.28);
+        background: rgba(20, 20, 20, 0.92);
+        color: #ffffff;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+        font-size: 12px;
+        line-height: 1.4;
+        opacity: 0;
+        transform: translateY(8px);
+        pointer-events: none;
+        transition: opacity 0.18s ease, transform 0.18s ease;
+      }
+
+      #${TOAST_ID}.cgpt-toast-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
       .cgpt-empty {
         padding: 18px;
         opacity: 0.65;
@@ -1465,12 +1542,18 @@
         .cgpt-modal-card,
         .cgpt-form input,
         .cgpt-form select,
-        .cgpt-form textarea {
+        .cgpt-form textarea,
+        .cgpt-inline-editor input,
+        .cgpt-inline-editor select,
+        .cgpt-inline-editor textarea,
+        .cgpt-inline-select {
           background: #2f2f2f;
           color: #ffffff;
         }
 
-        .cgpt-form select option {
+        .cgpt-form select option,
+        .cgpt-inline-editor select option,
+        .cgpt-inline-select option {
           background: #2f2f2f;
           color: #ffffff;
         }
@@ -1481,12 +1564,18 @@
         .cgpt-modal-card,
         .cgpt-form input,
         .cgpt-form select,
-        .cgpt-form textarea {
+        .cgpt-form textarea,
+        .cgpt-inline-editor input,
+        .cgpt-inline-editor select,
+        .cgpt-inline-editor textarea,
+        .cgpt-inline-select {
           background: #ffffff;
           color: #111111;
         }
 
-        .cgpt-form select option {
+        .cgpt-form select option,
+        .cgpt-inline-editor select option,
+        .cgpt-inline-select option {
           background: #ffffff;
           color: #111111;
         }
@@ -1514,6 +1603,23 @@
 
         .cgpt-manager-list {
           max-height: calc(100vh - 360px);
+        }
+
+        .cgpt-inline-editor-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .cgpt-manager-item-main {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .cgpt-manager-actions {
+          width: 100%;
+        }
+
+        .cgpt-inline-select {
+          flex: 1 1 auto;
         }
       }
     `);
