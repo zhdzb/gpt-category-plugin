@@ -33,6 +33,7 @@
     conversations: {},
     ui: {
       activeCategory: ALL_CATEGORY_NAME,
+      launcherPosition: null,
     },
   };
 
@@ -119,7 +120,22 @@
           activeCategory === ALL_CATEGORY_NAME || categories[activeCategory]
             ? activeCategory
             : ALL_CATEGORY_NAME,
+        launcherPosition: normalizeLauncherPosition(data.ui?.launcherPosition),
       },
+    };
+  }
+
+  function normalizeLauncherPosition(position) {
+    if (!position || typeof position !== 'object') return null;
+
+    const x = Number(position.x);
+    const y = Number(position.y);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    return {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
     };
   }
 
@@ -284,12 +300,129 @@
       <span class="cgpt-launcher-count">0</span>
     `;
 
+    applyLauncherPosition(launcher, loadData().ui?.launcherPosition);
+    bindLauncherDrag(launcher);
+
     launcher.addEventListener('click', () => {
+      if (launcher.dataset.dragging === '1') return;
       openManagerModal({ scan: true });
     });
 
     document.body.appendChild(launcher);
     return launcher;
+  }
+
+  function applyLauncherPosition(launcher, position) {
+    const normalized = normalizeLauncherPosition(position);
+
+    if (!normalized) {
+      launcher.style.left = '16px';
+      launcher.style.top = '';
+      launcher.style.right = '';
+      launcher.style.bottom = '88px';
+      return;
+    }
+
+    launcher.style.left = `${normalized.x}px`;
+    launcher.style.top = `${normalized.y}px`;
+    launcher.style.right = 'auto';
+    launcher.style.bottom = 'auto';
+  }
+
+  function clampLauncherPosition(x, y, launcher) {
+    const width = launcher.offsetWidth || 120;
+    const height = launcher.offsetHeight || 36;
+    const maxX = Math.max(0, window.innerWidth - width);
+    const maxY = Math.max(0, window.innerHeight - height);
+
+    return {
+      x: Math.min(Math.max(0, x), maxX),
+      y: Math.min(Math.max(0, y), maxY),
+    };
+  }
+
+  function bindLauncherDrag(launcher) {
+    let pointerId = null;
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let moved = false;
+
+    launcher.style.touchAction = 'none';
+
+    launcher.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+
+      const rect = launcher.getBoundingClientRect();
+      pointerId = event.pointerId;
+      startPointerX = event.clientX;
+      startPointerY = event.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      moved = false;
+      launcher.dataset.dragging = '0';
+
+      launcher.setPointerCapture(pointerId);
+    });
+
+    launcher.addEventListener('pointermove', event => {
+      if (pointerId !== event.pointerId) return;
+
+      const deltaX = event.clientX - startPointerX;
+      const deltaY = event.clientY - startPointerY;
+
+      if (!moved && Math.hypot(deltaX, deltaY) < 4) {
+        return;
+      }
+
+      moved = true;
+      launcher.dataset.dragging = '1';
+
+      const nextPosition = clampLauncherPosition(startLeft + deltaX, startTop + deltaY, launcher);
+      applyLauncherPosition(launcher, nextPosition);
+    });
+
+    const finishDrag = event => {
+      if (pointerId !== event.pointerId) return;
+
+      if (moved) {
+        const rect = launcher.getBoundingClientRect();
+        const nextPosition = clampLauncherPosition(rect.left, rect.top, launcher);
+        persistLauncherPosition(nextPosition);
+        applyLauncherPosition(launcher, nextPosition);
+
+        window.setTimeout(() => {
+          launcher.dataset.dragging = '0';
+        }, 0);
+      }
+
+      if (launcher.hasPointerCapture(pointerId)) {
+        launcher.releasePointerCapture(pointerId);
+      }
+
+      pointerId = null;
+    };
+
+    launcher.addEventListener('pointerup', finishDrag);
+    launcher.addEventListener('pointercancel', finishDrag);
+
+    window.addEventListener('resize', () => {
+      const data = loadData();
+      const savedPosition = data.ui?.launcherPosition;
+
+      if (!savedPosition) return;
+
+      const nextPosition = clampLauncherPosition(savedPosition.x, savedPosition.y, launcher);
+      persistLauncherPosition(nextPosition);
+      applyLauncherPosition(launcher, nextPosition);
+    });
+  }
+
+  function persistLauncherPosition(position) {
+    const data = loadData();
+    data.ui.launcherPosition = normalizeLauncherPosition(position);
+    saveData(data);
   }
 
   function updateLauncherCount(data = loadData()) {
@@ -1585,6 +1718,7 @@
         #${LAUNCHER_ID} {
           left: 12px;
           bottom: 72px;
+          top: auto;
         }
 
         .cgpt-modal-body {
